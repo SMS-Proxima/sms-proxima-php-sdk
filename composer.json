@@ -1,9 +1,9 @@
 {
     "name": "sms-proxima/sdk",
-    "description": "Official PHP SDK for the SMS Proxima API",
+    "description": "Official PHP SDK for the SMS Proxima API — send SMS, track delivery receipts and manage blacklists",
     "type": "library",
     "keywords": ["sms", "api", "proxima", "notification", "php"],
-    "homepage": "https://sms-proxima.com",
+    "homepage": "https://sms-proxima.com/api-sms",
     "license": "MIT",
     "authors": [
         {
