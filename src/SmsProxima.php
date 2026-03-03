@@ -25,6 +25,14 @@ class SmsProxima
         $this->timeout = $timeout;
     }
 
+    public function __debugInfo(): array
+    {
+        return [
+            'token'   => '***masked***',
+            'timeout' => $this->timeout,
+        ];
+    }
+
     // -------------------------------------------------------------------------
     // PING
     // -------------------------------------------------------------------------
