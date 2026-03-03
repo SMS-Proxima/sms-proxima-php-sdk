@@ -1,0 +1,34 @@
+{
+    "name": "sms-proxima/sdk",
+    "description": "Official PHP SDK for the SMS Proxima API",
+    "type": "library",
+    "keywords": ["sms", "api", "proxima", "notification", "php"],
+    "homepage": "https://sms-proxima.com",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "SMS Proxima",
+            "email": "contact@sms-proxima.com",
+            "homepage": "https://sms-proxima.com"
+        }
+    ],
+    "require": {
+        "php": ">=7.4",
+        "ext-curl": "*",
+        "ext-json": "*"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^10.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "SmsProxima\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "SmsProxima\\Tests\\": "tests/"
+        }
+    },
+    "minimum-stability": "stable"
+}
