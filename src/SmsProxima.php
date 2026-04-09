@@ -4,14 +4,16 @@ namespace SmsProxima;
 
 use SmsProxima\Exceptions\AuthenticationException;
 use SmsProxima\Exceptions\InsufficientCreditsException;
+use SmsProxima\Exceptions\InvalidSenderException;
+use SmsProxima\Exceptions\MobileBlacklistedException;
 use SmsProxima\Exceptions\ValidationException;
 use SmsProxima\Exceptions\SmsProximaException;
 
 class SmsProxima
 {
-    const VERSION    = '1.0.0';
+    const VERSION    = '1.1.0';
     const BASE_URL   = 'https://sms-proxima.com/api';
-    const USER_AGENT = 'SmsProxima-PHP-SDK/1.0.0 (+https://sms-proxima.com)';
+    const USER_AGENT = 'SmsProxima-PHP-SDK/1.1.0 (+https://sms-proxima.com)';
 
     private string $token;
     private int    $timeout;
@@ -70,7 +72,7 @@ class SmsProxima
      * Send one or multiple SMS.
      *
      * @param  string|array $to          Recipient(s) — e.g. "33612345678" or ["33612345678", "33687654321"]
-     * @param  string       $sender      Sender name (max 11 chars)
+     * @param  string       $sender      Sender name (4–11 chars, letters A-Z a-z and digits only, not all digits, no 5 consecutive digits)
      * @param  string       $message     SMS content
      * @param  array        $options     Optional: stop, timeToSend, sandbox, idempotencyKey
      * @return array{status: int, ticket: string, cost: int, credits: int, total: int}
@@ -190,6 +192,8 @@ class SmsProxima
     /**
      * @throws AuthenticationException
      * @throws InsufficientCreditsException
+     * @throws InvalidSenderException
+     * @throws MobileBlacklistedException
      * @throws ValidationException
      * @throws SmsProximaException
      */
@@ -250,33 +254,42 @@ class SmsProxima
         }
 
         // Map HTTP errors to typed exceptions
+        $apiCode = $decoded['code'] ?? null;
+        $apiMsg  = $decoded['message'] ?? '';
+
         switch ($httpCode) {
             case 401:
+                throw new AuthenticationException($apiMsg ?: 'Authentication failed.', $apiCode);
             case 403:
-                throw new AuthenticationException(
-                    $decoded['message'] ?? 'Authentication failed.',
-                    $decoded['code']    ?? null
-                );
+                if (in_array($apiCode, ['ACCOUNT_NOT_VALIDATED', null], true)) {
+                    throw new AuthenticationException($apiMsg ?: 'Authentication failed.', $apiCode);
+                }
+                throw new SmsProximaException($apiMsg ?: 'Forbidden.', 403, $apiCode);
             case 402:
                 throw new InsufficientCreditsException(
-                    $decoded['message'] ?? 'Insufficient credits.',
+                    $apiMsg ?: 'Insufficient credits.',
                     $decoded['credits'] ?? 0,
                     $decoded['cost']    ?? 0
                 );
             case 422:
+                if ($apiCode === 'MOBILE_BLACKLISTED') {
+                    throw new MobileBlacklistedException($apiMsg ?: 'Mobile is blacklisted (STOP received).');
+                }
+                if (in_array($apiCode, ['SENDER_NOT_ALLOWED', 'SENDER_INVALID_LENGTH', 'SENDER_DIGITS_ONLY', 'SENDER_INVALID_CHARS', 'SENDER_CONSECUTIVE_DIGITS', 'SENDER_EMPTY'], true)) {
+                    throw new InvalidSenderException($apiMsg ?: 'Invalid or unauthorized sender.', $apiCode);
+                }
                 throw new ValidationException(
-                    $decoded['message'] ?? 'Validation error.',
-                    $decoded['code']    ?? null,
-                    $decoded['errors']  ?? []
+                    $apiMsg ?: 'Validation error.',
+                    $apiCode,
+                    $decoded['errors'] ?? []
                 );
+            case 502:
+            case 503:
+                throw new SmsProximaException($apiMsg ?: 'Supplier error, please contact support.', $httpCode, $apiCode);
         }
 
         if ($httpCode >= 400) {
-            throw new SmsProximaException(
-                $decoded['message'] ?? 'API error.',
-                $httpCode,
-                $decoded['code'] ?? null
-            );
+            throw new SmsProximaException($apiMsg ?: 'API error.', $httpCode, $apiCode);
         }
 
         return $decoded;
