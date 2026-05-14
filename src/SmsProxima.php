@@ -3,17 +3,18 @@
 namespace SmsProxima;
 
 use SmsProxima\Exceptions\AuthenticationException;
+use SmsProxima\Exceptions\ConflictException;
 use SmsProxima\Exceptions\InsufficientCreditsException;
 use SmsProxima\Exceptions\InvalidSenderException;
 use SmsProxima\Exceptions\MobileBlacklistedException;
-use SmsProxima\Exceptions\ValidationException;
 use SmsProxima\Exceptions\SmsProximaException;
+use SmsProxima\Exceptions\ValidationException;
 
 class SmsProxima
 {
-    const VERSION    = '1.1.0';
+    const VERSION    = '1.2.0';
     const BASE_URL   = 'https://sms-proxima.com/api';
-    const USER_AGENT = 'SmsProxima-PHP-SDK/1.1.0 (+https://sms-proxima.com)';
+    const USER_AGENT = 'SmsProxima-PHP-SDK/1.2.0 (+https://sms-proxima.com)';
 
     private string $token;
     private int    $timeout;
@@ -71,14 +72,49 @@ class SmsProxima
     /**
      * Send one or multiple SMS.
      *
-     * @param  string|array $to          Recipient(s) — e.g. "33612345678" or ["33612345678", "33687654321"]
-     * @param  string       $sender      Sender name (4–11 chars, letters A-Z a-z and digits only, not all digits, no 5 consecutive digits)
-     * @param  string       $message     SMS content
-     * @param  array        $options     Optional: stop, timeToSend, sandbox, idempotencyKey
-     * @return array{status: int, ticket: string, cost: int, credits: int, total: int}
+     * When $message is an array, it must be aligned with $to (one message per recipient).
+     * Any variable substitution (e.g. customer first name) must be resolved upstream,
+     * before calling this method — the SDK expects final, ready-to-send strings.
+     *
+     * Examples:
+     *   // Same message for all recipients
+     *   $sms->send(['336001', '336002'], 'BOUTIQUE', 'Promo -20% ce week-end !');
+     *
+     *   // One message per recipient (already personalized upstream)
+     *   $sms->send(
+     *       ['336001', '336002'],
+     *       'BOUTIQUE',
+     *       ['Bonjour Marie, votre offre vous attend !', 'Bonjour Paul, votre offre vous attend !']
+     *   );
+     *
+     * @param  string|array        $to       Recipient(s) — e.g. "33612345678" or ["33612345678", "33687654321"]
+     * @param  string              $sender   Sender name (4–11 chars, letters A-Z a-z and digits only,
+     *                                       not all digits, no 5 consecutive digits)
+     * @param  string|array        $message  SMS content — a single string (same message for all) or
+     *                                       an array aligned on $to for personalized messages.
+     * @param  array               $options  Optional:
+     *                                         stop           int    0 or 1 (default 1 — STOP mention added)
+     *                                         timeToSend     string Scheduled send — "YYYY/MM/DD HH:MM" or "YYYY-MM-DD HH:MM"
+     *                                         sandbox        int    1 = simulation (no SMS sent, no credits debited)
+     *                                         ucs2           int    1 = Unicode encoding (required for emojis and
+     *                                                               non-latin characters — capacity: 70 chars/segment)
+     *                                         idempotencyKey string UUID v4 recommended — valid 24h, scoped per user+endpoint
+     * @return array{status: int, ticket: string, cost: float, credits: float, total: int}
      */
-    public function send($to, string $sender, string $message, array $options = []): array
+    public function send($to, string $sender, $message, array $options = []): array
     {
+        if (is_array($message) && is_string($to)) {
+            throw new \InvalidArgumentException(
+                'When $message is an array, $to must also be an array (one message per recipient).'
+            );
+        }
+
+        if (is_array($message) && is_array($to) && count($message) !== count($to)) {
+            throw new \InvalidArgumentException(
+                'The number of messages (' . count($message) . ') must match the number of recipients (' . count($to) . ').'
+            );
+        }
+
         $body = [
             'to'      => $to,
             'sender'  => $sender,
@@ -92,6 +128,10 @@ class SmsProxima
 
         if (!empty($options['sandbox'])) {
             $body['sandbox'] = 1;
+        }
+
+        if (!empty($options['ucs2'])) {
+            $body['ucs2'] = 1;
         }
 
         $headers = [];
@@ -191,6 +231,7 @@ class SmsProxima
 
     /**
      * @throws AuthenticationException
+     * @throws ConflictException
      * @throws InsufficientCreditsException
      * @throws InvalidSenderException
      * @throws MobileBlacklistedException
@@ -201,7 +242,6 @@ class SmsProxima
     {
         $url = self::BASE_URL . $endpoint;
 
-        // Append query string for GET requests with data
         if ($method === 'GET' && !empty($data)) {
             $url .= '?' . http_build_query($data);
         }
@@ -253,29 +293,44 @@ class SmsProxima
             throw new SmsProximaException('Invalid JSON response from API (HTTP ' . $httpCode . ').');
         }
 
-        // Map HTTP errors to typed exceptions
         $apiCode = $decoded['code'] ?? null;
         $apiMsg  = $decoded['message'] ?? '';
 
         switch ($httpCode) {
+            case 400:
+                throw new ValidationException($apiMsg ?: 'Bad request.', $apiCode);
+
             case 401:
                 throw new AuthenticationException($apiMsg ?: 'Authentication failed.', $apiCode);
+
             case 403:
                 if (in_array($apiCode, ['ACCOUNT_NOT_VALIDATED', null], true)) {
                     throw new AuthenticationException($apiMsg ?: 'Authentication failed.', $apiCode);
                 }
                 throw new SmsProximaException($apiMsg ?: 'Forbidden.', 403, $apiCode);
+
             case 402:
                 throw new InsufficientCreditsException(
                     $apiMsg ?: 'Insufficient credits.',
                     $decoded['credits'] ?? 0,
                     $decoded['cost']    ?? 0
                 );
+
+            case 409:
+                throw new ConflictException($apiMsg ?: 'Conflict.', $apiCode);
+
             case 422:
                 if ($apiCode === 'MOBILE_BLACKLISTED') {
                     throw new MobileBlacklistedException($apiMsg ?: 'Mobile is blacklisted (STOP received).');
                 }
-                if (in_array($apiCode, ['SENDER_NOT_ALLOWED', 'SENDER_INVALID_LENGTH', 'SENDER_DIGITS_ONLY', 'SENDER_INVALID_CHARS', 'SENDER_CONSECUTIVE_DIGITS', 'SENDER_EMPTY'], true)) {
+                if (in_array($apiCode, [
+                    'SENDER_NOT_ALLOWED',
+                    'SENDER_INVALID_LENGTH',
+                    'SENDER_DIGITS_ONLY',
+                    'SENDER_INVALID_CHARS',
+                    'SENDER_CONSECUTIVE_DIGITS',
+                    'SENDER_EMPTY',
+                ], true)) {
                     throw new InvalidSenderException($apiMsg ?: 'Invalid or unauthorized sender.', $apiCode);
                 }
                 throw new ValidationException(
@@ -283,6 +338,7 @@ class SmsProxima
                     $apiCode,
                     $decoded['errors'] ?? []
                 );
+
             case 502:
             case 503:
                 throw new SmsProximaException($apiMsg ?: 'Supplier error, please contact support.', $httpCode, $apiCode);

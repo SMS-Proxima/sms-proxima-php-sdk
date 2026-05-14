@@ -49,17 +49,31 @@ $credits = $sms->credits(); // int
 // Envoi simple
 $sms->send('33612345678', 'EXPEDITEUR', 'Votre message');
 
-// Envoi multiple
+// Envoi multiple — même message pour tous
 $sms->send(['33612345678', '33687654321'], 'EXPEDITEUR', 'Votre message');
+
+// Envoi multiple — message personnalisé par destinataire
+// Les messages doivent être finalisés avant d'appeler le SDK
+// (toute substitution de variables est à faire en amont)
+$sms->send(
+    ['33612345678', '33687654321'],
+    'BOUTIQUE',
+    ['Bonjour Marie, votre offre vous attend !', 'Bonjour Paul, votre offre vous attend !']
+);
 
 // Avec options
 $sms->send('33612345678', 'EXPEDITEUR', 'Votre message', [
-    'stop'           => 1,              // Mention STOP (défaut : 1)
+    'stop'           => 1,                 // Mention STOP (défaut : 1)
     'timeToSend'     => '2026-03-15 10:00', // Envoi programmé
-    'sandbox'        => 1,              // Mode test (aucun SMS envoyé, aucun crédit débité)
-    'idempotencyKey' => 'uuid-v4-ici',  // Anti double-envoi
+    'sandbox'        => 1,                 // Mode test (aucun SMS envoyé, aucun crédit débité)
+    'ucs2'           => 1,                 // Encodage Unicode — requis pour les emojis et caractères non latins
+    'idempotencyKey' => 'uuid-v4-ici',     // Anti double-envoi
 ]);
 ```
+
+> **Note `ucs2` :** Sans ce paramètre, un message contenant des emojis ou des caractères non latins
+> (arabe, cyrillique…) retournera une erreur `INVALID_ENCODING`. La capacité par segment passe
+> de 160 à 70 caractères (67 en multi-segments).
 
 ### Comptage de caractères
 
@@ -102,7 +116,10 @@ $sms->removeFromBlacklist('33612345678');
 ```php
 use SmsProxima\SmsProxima;
 use SmsProxima\Exceptions\AuthenticationException;
+use SmsProxima\Exceptions\ConflictException;
 use SmsProxima\Exceptions\InsufficientCreditsException;
+use SmsProxima\Exceptions\InvalidSenderException;
+use SmsProxima\Exceptions\MobileBlacklistedException;
 use SmsProxima\Exceptions\ValidationException;
 use SmsProxima\Exceptions\SmsProximaException;
 
@@ -115,6 +132,16 @@ try {
 
 } catch (AuthenticationException $e) {
     echo 'Clé API invalide ou compte non validé.';
+
+} catch (MobileBlacklistedException $e) {
+    echo 'Numéro en liste noire (STOP reçu).';
+
+} catch (InvalidSenderException $e) {
+    echo 'Expéditeur invalide : ' . $e->getMessage();
+
+} catch (ConflictException $e) {
+    // Ex : numéro déjà en blacklist (HTTP 409)
+    echo 'Conflit : ' . $e->getMessage();
 
 } catch (ValidationException $e) {
     echo 'Erreur de validation : ' . $e->getMessage();
@@ -157,6 +184,23 @@ SMS Proxima enverra un `POST JSON` sur votre endpoint à chaque accusé de réce
 **Votre endpoint doit répondre HTTP 2xx dans les 6 secondes.**
 En cas d'échec, la requête est rejouée jusqu'à 8 fois sur 24h.
 Utilisez `event_id` pour détecter les doublons éventuels.
+
+---
+
+## Changelog
+
+### v1.2.0
+- `send()` : `$message` accepte désormais `string|array` pour les envois personnalisés (un message par destinataire)
+- `send()` : ajout de l'option `ucs2` pour les emojis et caractères non latins
+- Nouvelle exception `ConflictException` pour les erreurs HTTP 409 (ex : numéro déjà en blacklist)
+- Gestion explicite des erreurs HTTP 400 (requête malformée)
+
+### v1.1.0
+- Ajout des méthodes `deliveries()`, `campaigns()`, `getBlacklist()`, `addToBlacklist()`, `removeFromBlacklist()`
+- Exceptions typées : `InvalidSenderException`, `MobileBlacklistedException`
+
+### v1.0.0
+- Version initiale : `send()`, `credits()`, `ping()`, `count()`
 
 ---
 
